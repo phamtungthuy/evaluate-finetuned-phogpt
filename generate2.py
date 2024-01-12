@@ -10,7 +10,7 @@ import time
 
 import os
 import json
-filename = "./json/data.json"
+filename = "./json/data2.json"
 split="test[2000:3000]"
 if os.path.exists(filename):
     with open(filename, "r") as file:
