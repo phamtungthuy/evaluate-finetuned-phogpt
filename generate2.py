@@ -10,7 +10,7 @@ import time
 
 import os
 import json
-filename = "./json/data2.json"
+filename = "./json/data.json"
 split="test[2000:3000]"
 if os.path.exists(filename):
     with open(filename, "r") as file:
@@ -18,27 +18,6 @@ if os.path.exists(filename):
 else:
     count = 0
 print(count)
-
-def create_peft_config(model):
-    from peft import (
-        get_peft_model,
-        LoraConfig,
-        TaskType,
-        prepare_model_for_int8_training
-    )
-
-    peft_config = LoraConfig(
-        task_type=TaskType.CAUSAL_LM,
-        inference_mode=False,
-        r=4,
-        lora_alpha=64,
-        lora_dropout=0.1,
-    )
-
-    # prepare int-8 model for training
-    model = get_peft_model(model, peft_config)
-    model.print_trainable_parameters()
-    return model, peft_config
 
 def gen(model_base, model_peft, dataset_id):
     bnb_config = BitsAndBytesConfig(
@@ -48,7 +27,7 @@ def gen(model_base, model_peft, dataset_id):
         bnb_4bit_compute_dtyp=torch.bfloat16
     )
     
-    tokenizer = AutoTokenizer.from_pretrained(model_base)
+    tokenizer = AutoTokenizer.from_pretrained(model_base, trust_remote_code=True)
 
     model = AutoModelForCausalLM.from_pretrained(
         model_base,
@@ -75,41 +54,31 @@ def gen(model_base, model_peft, dataset_id):
         input_prompt = PROMPT_TEMPLATE.format_map(
             {"instruction": row['question']}
         )
-        full_res = ""
-        inputs = tokenizer(input_prompt, return_tensors="pt").to("cuda")
-        for _ in range(len(input_prompt)):
-            input_len = inputs["input_ids"].shape[1]
-            with torch.backends.cuda.sdp_kernel(enable_flash=True, enable_math=False, enable_mem_efficient=False):
-                output = model.generate(  
-                    inputs=inputs["input_ids"].to("cuda"),  
-                    attention_mask=inputs["attention_mask"].to("cuda"),  
-                    do_sample=True,
-                    temperature=1.0,  
-                    top_k=50,  
-                    top_p=0.9,  
-                    max_new_tokens=1,  
-                    eos_token_id=tokenizer.eos_token_id,  
-                    pad_token_id=tokenizer.pad_token_id  
-                )
-            if output[0][-1] == tokenizer.eos_token_id:
-                break
-            response = tokenizer.batch_decode(output[0][input_len:], skip_special_tokens=True)[:1]  
-        #     response = response.split("### Trả lời:")[1]
-            full_res += ''.join(response)
-            inputs = {
-                "input_ids": output,
-                "attention_mask": torch.ones(1, len(output[0]))
-            }
+        input_ids = tokenizer(input_prompt, return_tensors="pt")
+        outputs = model.generate(
+            inputs=input_ids["input_ids"].to("cuda"),
+            attention_mask=input_ids["attention_mask"].to("cuda"),
+            do_sample=True,
+            temperature=1.0,
+            top_k=50,
+            top_p=0.9,
+            max_new_tokens=400,
+            eos_token_id=tokenizer.eos_token_id,
+            pad_token_id=tokenizer.pad_token_id
+        )
+        response = tokenizer.batch_decode(outputs, skip_special_tokens=True)[0]  
+        response = response.split("### Trả lời:")[1]
         obj = test_dataset[idx]
         del obj["question"]
         del obj["field"]
-        obj["actual_answer"] = full_res
+        obj["actual_answer"] = response
         with open(filename, "a") as file:
             if idx > 0:
                 file.write("\n")
             file.write(json.dumps(obj, ensure_ascii=False))
-        print("total generate answer: ", time.time() - start)
+            count += 1
+        print("total generation time ", time.time() - start)
 
 
 if __name__ == "__main__":
-    gen('vinai/PhoGPT-7B5-Instruct', 'phamtungthuy/trained_law_model_2', "phamtungthuy/cauhoiphapluat_400tokenanswer")
+    gen('vinai/PhoGPT-7B5-Instruct', 'phamtungthuy/law-model-version2', "phamtungthuy/cauhoiphapluat_400tokenanswer")
